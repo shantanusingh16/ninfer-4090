@@ -1,0 +1,24 @@
+# syntax=docker/dockerfile:1
+ARG CUDA_DEV=12.9.2-devel-ubuntu24.04
+FROM nvidia/cuda:${CUDA_DEV} AS build
+# If 12.9.2 pulls a 404, use the newest existing 12.9.x-devel-ubuntu24.04 tag (12.9.1 or 12.9.0).
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+ && apt-get install --yes --no-install-recommends \
+        cmake ninja-build pkg-config \
+        libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libcurl4-openssl-dev \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY . .
+RUN cmake -S . -B /build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_CUDA_ARCHITECTURES=89 \
+        -DNINFER_BUILD_APPS=ON -DBUILD_TESTING=OFF -DNINFER_BUILD_BENCHMARKS=OFF \
+ && cmake --build /build --target ninfer ninfer-serve
+
+FROM ghcr.io/mostlygeek/llama-swap:unified-cuda
+# Entries inherited automatically (llama-swap ENTRYPOINT + CMD), base already has
+# libavcodec.so.60, libavformat.so.60, libavutil.so.58, libswscale.so.7, libcurl.so.4, ca-certificates.
+RUN ldconfig
+COPY --from=build /build/apps/ninfer /usr/local/bin/ninfer
+COPY --from=build /build/apps/ninfer-serve /usr/local/bin/ninfer-serve
