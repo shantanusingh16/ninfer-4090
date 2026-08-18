@@ -49,6 +49,23 @@ void set_owned_content(httplib::Response& response, std::string body,
     response.hold_resource(std::move(lifetime));
 }
 
+// CompletionUsage carrying the engine's measured phase timings, so the OpenAI
+// schema layer can emit the llama.cpp-compatible `timings` block (llama-swap
+// derives Prefill/Decode rates and draft stats from it).
+CompletionUsage usage_with_timings(const GenerationOutcome& outcome) {
+    CompletionUsage usage;
+    usage.prompt_tokens     = outcome.prompt_tokens;
+    usage.completion_tokens = outcome.completion_tokens;
+    usage.has_timings       = true;
+    usage.prefill_seconds   = outcome.metrics.prefill_seconds;
+    usage.decode_seconds    = outcome.metrics.decode_seconds;
+    usage.ttft_seconds      = outcome.metrics.ttft_seconds;
+    usage.cache_hit_tokens  = outcome.metrics.prefix_cache_hit_tokens;
+    usage.draft_tokens      = outcome.metrics.speculative_draft_tokens;
+    usage.accepted_tokens   = outcome.metrics.speculative_accepted_tokens;
+    return usage;
+}
+
 void write_error(httplib::Response& res, const ApiError& error) {
     res.status = error.status;
     res.set_content(make_error_body(error), "application/json");
@@ -409,7 +426,7 @@ void HttpServer::handle_chat_completions(const httplib::Request& req, httplib::R
                 return req.is_connection_alive && !req.is_connection_alive();
             });
             log_request_done(log_context, outcome);
-            const CompletionUsage usage{outcome.prompt_tokens, outcome.completion_tokens};
+            const CompletionUsage usage = usage_with_timings(outcome);
             std::string response_body;
             if (!outcome.tool_calls.empty()) {
                 response_body = make_chat_completion_tool_response(
@@ -466,6 +483,7 @@ void HttpServer::handle_chat_completions(const httplib::Request& req, httplib::R
 
                 const GenerationOutcome outcome = service_->run(stream->prepared, &output);
                 log_request_done(log_context, outcome);
+                const CompletionUsage usage = usage_with_timings(outcome);
                 const std::string_view remaining = unstreamed_content(outcome);
                 if (!outcome.tool_calls.empty()) {
                     if (!remaining.empty()) {
@@ -477,9 +495,9 @@ void HttpServer::handle_chat_completions(const httplib::Request& req, httplib::R
                     write_stream_item(sink, *stream,
                                       make_chat_chunk_tool_calls(
                                           id, model, created, outcome.tool_calls, include_usage));
-                    write_stream_item(
-                        sink, *stream,
-                        make_chat_chunk_final(id, model, created, "tool_calls", include_usage));
+                    write_stream_item(sink, *stream,
+                                      make_chat_chunk_final(id, model, created, "tool_calls",
+                                                            include_usage, usage));
                 } else {
                     if (tool_capable && !remaining.empty()) {
                         write_stream_item(sink, *stream,
@@ -491,10 +509,9 @@ void HttpServer::handle_chat_completions(const httplib::Request& req, httplib::R
                         sink, *stream,
                         make_chat_chunk_final(id, model, created,
                                               finish_reason_wire(outcome.finish_reason),
-                                              include_usage));
+                                              include_usage, usage));
                 }
                 if (include_usage) {
-                    const CompletionUsage usage{outcome.prompt_tokens, outcome.completion_tokens};
                     write_stream_item(sink, *stream,
                                       make_chat_chunk_usage(id, model, created, usage));
                 }
