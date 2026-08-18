@@ -214,6 +214,24 @@ GCC 13, and CMake 3.28 or newer; the Docker image builds with CUDA 13.1.
 
 ## What this fork changes
 
+This fork descends from [sergiuszm/ninfer-4090](https://github.com/sergiuszm/ninfer-4090)
+and inherits its full `sm_89` port (retuned attention prefill, E8 4-bit KV at the
+native 262,144 context, MTP3, vision, `/metrics` and `/slots` endpoints). On top of
+that upstream base it adds two things needed to run alongside llama.cpp under
+llama-swap — see [the fork comparison](docs/fork-vs-upstream.md) for the measured
+delta:
+
+- **llama.cpp-compatible `timings` in responses.** ninfer-serve now serializes the
+  phase timing it already measures into a llama.cpp-shaped top-level `timings` block
+  (Prompt/Decode rates, MTP draft acceptance, cache hits, TTFT) on chat-completion
+  responses and streaming chunks, so llama-swap-style proxies surface per-request
+  performance for ninfer-served models.
+- **Unified llama-swap image (`Dockerfile.llamaswap`).** A second Dockerfile builds
+  the engine against CUDA 12.9 and copies `ninfer`/`ninfer-serve` into the
+  `ghcr.io/mostlygeek/llama-swap:unified-cuda` runtime stage, so one container serves
+  llama-swap, llama.cpp, ik-llama-server, and ninfer together. The upstream
+  standalone CUDA 13.1 `Dockerfile` is unchanged.
+
 - **`sm_89` retarget.** The CMake architecture pin, the runtime compute-capability check, and the
   NVFP4 stub gate now select `sm_89`. Most SM86 kernel schedules run unmodified on Ada; the
   INT8 attention prefill schedule is retuned (below).
@@ -289,6 +307,10 @@ JSONL request logs. See [HTTP serving](docs/serving.md) and [CLI usage](docs/cli
 
 ## Upstream and credits
 
+- [sergiuszm/ninfer-4090](https://github.com/sergiuszm/ninfer-4090) - the parent RTX 4090
+  (`sm_89`) port this fork is based on: Ada-retuned attention prefill, E8 4-bit KV at the full
+  native 262,144 context, MTP3, vision, and the llama.cpp-compatible `/metrics` and `/slots`
+  endpoints. Our additions on top of it are [documented here](docs/fork-vs-upstream.md).
 - [Neroued/ninfer](https://github.com/Neroued/ninfer) - the engine, developed for the RTX 5090
   (`sm_120a`).
 - [Don-Chad/ninfer-3090](https://github.com/Don-Chad/ninfer-3090) - the SM86 compatibility layer,
